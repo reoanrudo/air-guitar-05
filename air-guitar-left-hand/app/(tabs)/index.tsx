@@ -11,6 +11,9 @@ export default function HomeScreen() {
   const { isConnected, roomId } = useP2P();
   const colors = useColors();
 
+  // デバッグ: roomIdの値をログに出力
+  console.log('🔍 Debug roomId:', roomId, 'Length:', roomId?.length, 'Value:', JSON.stringify(roomId));
+
   const handleStartPress = () => {
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

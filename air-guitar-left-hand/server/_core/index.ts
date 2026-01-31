@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import { WebSocketServer, WebSocket } from "ws";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
@@ -83,6 +84,78 @@ async function startServer() {
     console.log(`[PeerJS] Client disconnected: ${client.getId()}`);
   });
 
+  // WebSocketサーバー for PC-Mobile通信
+  const wss = new WebSocketServer({ server, path: "/ws" });
+
+  // PCとスマホのWebSocket接続を管理
+  const pcConnections = new Set<WebSocket>();
+  const mobileConnections = new Set<WebSocket>();
+
+  wss.on("connection", (ws: WebSocket, req) => {
+    const userAgent = req.headers["user-agent"] || "";
+    console.log(`[WS] New connection. User-Agent: ${userAgent}`);
+
+    // React Native/ExpoのUser-Agentを検出
+    const isMobile = /mobile|android|iphone|ipad|expo|react-native|okhttp/i.test(userAgent);
+
+    if (isMobile) {
+      // スマホからの接続
+      mobileConnections.add(ws);
+      console.log(`[WS] ✅ Mobile connected. Total mobile: ${mobileConnections.size}, Total PC: ${pcConnections.size}`);
+
+      // スマホが期待する形式で接続確認メッセージを送信
+      ws.send(JSON.stringify({ type: "id", id: "mobile-" + Date.now() }));
+
+      ws.on("message", (data) => {
+        // スマホからのメッセージをPCに転送
+        const messageStr = data.toString();
+        console.log(`[WS] Mobile -> PC: ${messageStr.substring(0, 100)}`);
+
+        pcConnections.forEach((pcWs) => {
+          if (pcWs.readyState === WebSocket.OPEN) {
+            pcWs.send(data);
+          }
+        });
+      });
+
+      ws.on("close", () => {
+        mobileConnections.delete(ws);
+        console.log(`[WS] Mobile disconnected. Remaining mobile: ${mobileConnections.size}`);
+      });
+
+      ws.on("error", (err) => {
+        console.error(`[WS] Mobile error:`, err);
+        mobileConnections.delete(ws);
+      });
+    } else {
+      // PCからの接続
+      pcConnections.add(ws);
+      console.log(`[WS] ✅ PC connected. Total PC: ${pcConnections.size}, Total mobile: ${mobileConnections.size}`);
+
+      ws.on("message", (data) => {
+        // PCからのメッセージをスマホに転送
+        const messageStr = data.toString();
+        console.log(`[WS] PC -> Mobile: ${messageStr.substring(0, 100)}`);
+
+        mobileConnections.forEach((mobileWs) => {
+          if (mobileWs.readyState === WebSocket.OPEN) {
+            mobileWs.send(data);
+          }
+        });
+      });
+
+      ws.on("close", () => {
+        pcConnections.delete(ws);
+        console.log(`[WS] PC disconnected. Remaining PC: ${pcConnections.size}`);
+      });
+
+      ws.on("error", (err) => {
+        console.error(`[WS] PC error:`, err);
+        pcConnections.delete(ws);
+      });
+    }
+  });
+
   const preferredPort = parseInt(process.env.PORT || "3001");
   const port = await findAvailablePort(preferredPort);
 
@@ -94,6 +167,7 @@ async function startServer() {
   server.listen(port, "0.0.0.0", () => {
     console.log(`[api] server listening on 0.0.0.0:${port}`);
     console.log(`[PeerJS] signaling server running on /peerjs`);
+    console.log(`[WS] WebSocket server running on /ws`);
   });
 }
 

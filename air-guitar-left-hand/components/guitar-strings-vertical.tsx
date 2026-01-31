@@ -1,11 +1,10 @@
 /**
- * ギター弦表示コンポーネント（弦が縦向き版） - マルチタッチ対応
+ * ギター弦表示コンポーネント（弦が縦向き版）
  * 横向き画面で弦を縦に表示
- * 同時に複数の弦を押すことが可能
  */
 
-import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { View, Text, StyleSheet, Platform, Dimensions, PanResponder } from "react-native";
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import { View, Text, Pressable, StyleSheet, Platform, Dimensions } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/use-colors";
 import type { GuitarChord } from "@/lib/guitar-chords";
@@ -29,23 +28,15 @@ export function GuitarStringsVertical({
 }: GuitarStringsVerticalProps) {
   const colors = useColors();
   const [pressedStrings, setPressedStrings] = useState<Set<number>>(new Set());
-  const [screenSize, setScreenSize] = useState({
-    width: Dimensions.get("window").width,
-    height: Dimensions.get("window").height
-  });
+  const pressedStringsRef = useRef<Set<number>>(new Set());
 
-  // 各弦のフレット位置を計算
+  // 各弦の押さえる位置を計算
   const stringPositions = useMemo(() => {
-    const frets: number[] = [0, 0, 0, 0, 0, 0]; // 初期値: 全て開放
-
+    const positions: { [key: number]: number } = {};
     selectedChord.fingering.forEach((f) => {
-      const stringIndex = 6 - f.string; // string: 6(E) -> index: 0, string: 1(E) -> index: 5
-      if (stringIndex >= 0 && stringIndex < 6) {
-        frets[stringIndex] = f.fret === -1 ? 0 : f.fret;
-      }
+      positions[f.string] = f.fret;
     });
-
-    return { frets };
+    return positions;
   }, [selectedChord]);
 
   // 押さえている弦が変わった時にコールバックを呼ぶ
@@ -53,52 +44,27 @@ export function GuitarStringsVertical({
     onPressedStringsChange?.(pressedStrings);
   }, [pressedStrings, onPressedStringsChange]);
 
-  // 各弦のPanResponderを作成
-  const stringResponders = useMemo(() => {
-    return Array.from({ length: STRING_COUNT }).map((_, i) => {
-      const stringNumber = STRING_COUNT - i;
+  const handleStringPressIn = (stringNumber: number) => {
+    const newSet = new Set(pressedStrings);
+    newSet.add(stringNumber);
+    setPressedStrings(newSet);
+    pressedStringsRef.current = newSet;
 
-      return PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderGrant: () => {
-          setPressedStrings((prev) => {
-            const newSet = new Set(prev);
-            newSet.add(stringNumber);
-            return newSet;
-          });
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    onStringPress?.(stringNumber);
+  };
 
-          if (Platform.OS !== "web") {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          }
+  const handleStringPressOut = (stringNumber: number) => {
+    const newSet = new Set(pressedStrings);
+    newSet.delete(stringNumber);
+    setPressedStrings(newSet);
+    pressedStringsRef.current = newSet;
+  };
 
-          onStringPress?.(stringNumber);
-        },
-        onPanResponderRelease: () => {
-          setPressedStrings((prev) => {
-            const newSet = new Set(prev);
-            newSet.delete(stringNumber);
-            return newSet;
-          });
-        },
-      });
-    });
-  }, [onStringPress]);
-
-  // 画面サイズ変更を監視
-  useEffect(() => {
-    const handleDimensionsChange = () => {
-      const { width, height } = Dimensions.get("window");
-      setScreenSize({ width, height });
-    };
-
-    const subscription = Dimensions.addEventListener("change", handleDimensionsChange);
-    handleDimensionsChange();
-
-    return () => subscription?.remove();
-  }, []);
-
-  const { width: screenWidth, height: screenHeight } = screenSize;
+  const screenHeight = Dimensions.get("window").height;
+  const screenWidth = Dimensions.get("window").width;
 
   return (
     <View style={[styles.container, { height: screenHeight, width: screenWidth * 0.82 }]}>
@@ -122,17 +88,16 @@ export function GuitarStringsVertical({
       <View style={styles.stringsContainer}>
         {Array.from({ length: STRING_COUNT }).map((_, i) => {
           const stringNumber = STRING_COUNT - i;
-          const stringIndex = STRING_COUNT - 1 - i;
-          const fretPosition = stringPositions.frets[stringIndex];
-          const isMuted = selectedChord.fingering.some(f => f.string === stringNumber && f.fret === -1);
+          const fretPosition = stringPositions[stringNumber] ?? 0;
+          const isMuted = fretPosition === -1;
           const isPressed = pressedStrings.has(stringNumber);
-          const responder = stringResponders[i].panHandlers;
 
           return (
-            <View
+            <Pressable
               key={`string-${stringNumber}`}
-              style={[styles.stringTouchable]}
-              {...responder}
+              onPressIn={() => handleStringPressIn(stringNumber)}
+              onPressOut={() => handleStringPressOut(stringNumber)}
+              style={styles.stringPressable}
             >
               <View style={styles.stringWrapper}>
                 {/* 弦本体 */}
@@ -145,7 +110,7 @@ export function GuitarStringsVertical({
                       shadowColor: isPressed ? "#000000" : "transparent",
                       shadowOpacity: isPressed ? 0.8 : 0,
                       shadowRadius: isPressed ? 6 : 0,
-                      elevation: isPressed ? 8 : 0,
+                      elevation: isPressed ? 12 : 0,
                     },
                   ]}
                 />
@@ -171,13 +136,13 @@ export function GuitarStringsVertical({
                     <Text style={styles.mutedText}>×</Text>
                   </View>
                 )}
-
-                {/* 弦番号（下部） */}
-                <Text style={[styles.stringNumber, { color: colors.muted }]}>
-                  {stringNumber}
-                </Text>
               </View>
-            </View>
+
+              {/* 弦番号（下部） */}
+              <Text style={[styles.stringNumber, { color: colors.muted }]}>
+                {stringNumber}
+              </Text>
+            </Pressable>
           );
         })}
       </View>
@@ -224,7 +189,7 @@ const styles = StyleSheet.create({
     alignItems: "stretch",
     paddingVertical: 8,
   },
-  stringTouchable: {
+  stringPressable: {
     flex: 1,
     justifyContent: "space-between",
     alignItems: "center",

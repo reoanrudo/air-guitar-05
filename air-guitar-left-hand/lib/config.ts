@@ -16,14 +16,14 @@ const getEnvVar = (key: string, defaultValue: string): string => {
 export const wsConfig = {
   /** P2P用WebSocketサーバーURL（プラットフォーム別デフォルト） */
   p2pUrl: Platform.OS === "web"
-    ? getEnvVar("EXPO_PUBLIC_P2P_WS_URL", "ws://localhost:3001")
-    : getEnvVar("EXPO_PUBLIC_P2P_WS_URL", "ws://localhost:3001"),
+    ? getEnvVar("EXPO_PUBLIC_P2P_WS_URL", "ws://localhost:8000/ws")
+    : getEnvVar("EXPO_PUBLIC_P2P_WS_URL", "ws://localhost:8000/ws"),
 
   /** Web用WebSocketサーバーURL（デフォルト: localhost:8080） */
-  webUrl: getEnvVar("EXPO_PUBLIC_WS_WEB_URL", "ws://localhost:8080"),
+  webUrl: getEnvVar("EXPO_PUBLIC_WS_WEB_URL", "ws://localhost:8000/ws"),
 
-  /** モバイル用WebSocketサーバーURL（デフォルト: 10.239.209.208:8080） */
-  mobileUrl: getEnvVar("EXPO_PUBLIC_WS_MOBILE_URL", "ws://10.239.209.208:8080"),
+  /** モバイル用WebSocketサーバーURL（デフォルト: localhost:8000/ws - adb reverse経由） */
+  mobileUrl: getEnvVar("EXPO_PUBLIC_WS_MOBILE_URL", "ws://localhost:8000/ws"),
 
   /** プラットフォームに応じたWebSocket URLを取得 */
   getCurrentUrl: (): string => {

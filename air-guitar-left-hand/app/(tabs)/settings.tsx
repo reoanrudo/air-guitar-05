@@ -14,9 +14,8 @@ import { useP2P } from "@/lib/p2p-provider";
 
 export default function SettingsScreen() {
   const colors = useColors();
-  const { roomId, isConnected, connectToPC, disconnect, error } = useP2P();
+  const { roomId, setRoomId, isConnected, connectToPC, disconnect, error } = useP2P();
   const [isConnecting, setIsConnecting] = useState(false);
-  const [roomInput, setRoomInput] = useState("");
 
   const handleConnect = async () => {
     if (isConnected) {
@@ -24,24 +23,17 @@ export default function SettingsScreen() {
       return;
     }
 
-    if (!roomInput) {
+    if (!roomId) {
       Alert.alert("エラー", "Room IDを入力してください");
       return;
     }
 
     setIsConnecting(true);
-    try {
-      await connectToPC(roomInput);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (e) {
-      console.error("Connection failed:", e);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-    } finally {
-      setIsConnecting(false);
+    await connectToPC(roomId);
+    setIsConnecting(false);
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   };
 
@@ -71,11 +63,11 @@ export default function SettingsScreen() {
            {/* Room ID入力カード */}
            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
              <Text style={[styles.cardLabel, { color: colors.muted }]}>PC側のRoom ID</Text>
-             <View style={[styles.inputBox, { backgroundColor: colors.background, borderColor: roomInput.length === 4 ? colors.primary : colors.border }]}>
+             <View style={[styles.inputBox, { backgroundColor: colors.background, borderColor: roomId.length === 4 ? colors.primary : colors.border }]}>
                <Text
                  style={[styles.inputText, { color: colors.foreground }]}
                >
-                 {roomInput || "____"}
+                 {roomId || "____"}
                </Text>
              </View>
              <Text style={[styles.cardHint, { color: colors.muted }]}>
@@ -87,8 +79,8 @@ export default function SettingsScreen() {
                  <Pressable
                    key={index}
                    onPress={() => {
-                     if (roomInput.length < 4) {
-                       setRoomInput(roomInput + char);
+                     if (roomId.length < 4) {
+                       setRoomId(roomId + char);
                        if (Platform.OS !== "web") {
                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                        }
@@ -110,7 +102,7 @@ export default function SettingsScreen() {
                ))}
                <Pressable
                  onPress={() => {
-                   setRoomInput(roomInput.slice(0, -1));
+                   setRoomId(roomId.slice(0, -1));
                    if (Platform.OS !== "web") {
                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                    }

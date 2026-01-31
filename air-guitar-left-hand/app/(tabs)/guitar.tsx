@@ -18,30 +18,59 @@ export default function GuitarScreen() {
   const [selectedChord, setSelectedChord] = useState(BEGINNER_CHORDS[0]); // デフォルトはC
   const [pressedStrings, setPressedStrings] = useState<Set<number>>(new Set());
   const { sendData, isConnected } = useP2P();
+  const sendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const colors = useColors();
-
-  // コードのフィンガリングをフレット状態配列に変換
-  const convertChordToFretStates = (chord: typeof BEGINNER_CHORDS[0]): number[] => {
-    const fretStates = [0, 0, 0, 0, 0, 0];
-    chord.fingering.forEach(({ string, fret }) => {
-      const stringIndex = 6 - string; // string: 6(E) -> index: 0, string: 1(E) -> index: 5
-      if (stringIndex >= 0 && stringIndex < 6) {
-        fretStates[stringIndex] = fret === -1 ? 0 : fret;
-      }
-    });
-    return fretStates;
-  };
 
   // コードが変更されたらPC側に送信
   useEffect(() => {
     if (isConnected) {
-      const fretStates = convertChordToFretStates(selectedChord);
       sendData({
-        type: "FRET_UPDATE",
-        payload: fretStates,
+        type: "chord_change",
+        chord: selectedChord.name,
+        fingering: selectedChord.fingering,
       });
     }
   }, [selectedChord, isConnected, sendData]);
+
+  // 押さえている弦の状態が変わった時の処理
+  useEffect(() => {
+    // 前の送信タイマーをクリア
+    if (sendIntervalRef.current) {
+      clearInterval(sendIntervalRef.current);
+      sendIntervalRef.current = null;
+    }
+
+    // 弦が押さえられている場合、継続的に状態を送信
+    if (pressedStrings.size > 0 && isConnected) {
+      // 初回送信
+      sendData({
+        type: "strings_pressed",
+        strings: Array.from(pressedStrings),
+        chord: selectedChord.name,
+      });
+
+      // 100msごとに状態を送信（PC側でリアルタイム反応を維持）
+      sendIntervalRef.current = setInterval(() => {
+        sendData({
+          type: "strings_pressed",
+          strings: Array.from(pressedStrings),
+          chord: selectedChord.name,
+        });
+      }, 100);
+    } else if (pressedStrings.size === 0 && isConnected) {
+      // 弦が全て離された時
+      sendData({
+        type: "strings_released",
+        chord: selectedChord.name,
+      });
+    }
+
+    return () => {
+      if (sendIntervalRef.current) {
+        clearInterval(sendIntervalRef.current);
+      }
+    };
+  }, [pressedStrings, isConnected, selectedChord, sendData]);
 
   const handleStringPress = (stringNumber: number) => {
     // 初回タップ時の通知（onPressedStringsChangeで処理される）
@@ -52,12 +81,12 @@ export default function GuitarScreen() {
   };
 
   return (
-    <ScreenContainer 
+    <ScreenContainer
       className="flex-1"
       edges={["left", "right"]}
       containerClassName="flex-1"
     >
-      <Animated.View 
+      <Animated.View
         style={styles.mainContainer}
         entering={FadeIn.duration(400)}
       >
@@ -81,8 +110,8 @@ export default function GuitarScreen() {
 
           {/* 右側：ギター弦表示エリア（弦が縦向き） */}
           <View style={styles.rightPanel}>
-            <GuitarStringsVertical 
-              selectedChord={selectedChord} 
+            <GuitarStringsVertical
+              selectedChord={selectedChord}
               onStringPress={handleStringPress}
               onPressedStringsChange={handlePressedStringsChange}
             />
