@@ -13,7 +13,7 @@ interface PCPlayerProps {
 interface Note {
   id: number;
   x: number;
-  fret: number;
+  chordName: string;
   hit: boolean;
   missed: boolean;
 }
@@ -43,7 +43,8 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
 
   const scoreRef = useRef(0);
   const comboRef = useRef(0);
-  const fretStatesRef = useRef<number[]>([0, 0, 0, 0, 0, 0]);
+  const fretStatesRef = useRef<(number | null)[]>([null, null, null, null, null, null]);
+  const currentChordRef = useRef<string>("C");
   const notesRef = useRef<Note[]>([]);
   const nextNoteId = useRef(0);
   const lastNoteSpawnTime = useRef(0);
@@ -62,11 +63,26 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
 
   const [dims, setDims] = useState({ w: window.innerWidth, h: window.innerHeight });
 
+  // 次元の更新はuseRefで行い、再レンダリングを防ぐ
+  const dimsRef = useRef(dims);
+
   useEffect(() => {
-    const handleResize = () => setDims({ w: window.innerWidth, h: window.innerHeight });
+    const handleResize = () => {
+      const newDims = { w: window.innerWidth, h: window.innerHeight };
+      dimsRef.current = newDims;
+      setDims(newDims);
+    };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // canvasの次元を更新（リサイズ対応）
+  useEffect(() => {
+    if (canvasRef.current) {
+      canvasRef.current.width = dims.w;
+      canvasRef.current.height = dims.h;
+    }
+  }, [dims]);
 
   const CANVAS_W = dims.w;
   const CANVAS_H = dims.h;
@@ -90,7 +106,7 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
     }
 
     // WebSocketでモバイルアプリから直接データを受信
-    const ws = new WebSocket('ws://localhost:3001');
+    const ws = new WebSocket('ws://localhost:8000/ws');
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -98,13 +114,44 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
       setIsConnected(true);
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
       try {
-        const data = JSON.parse(event.data);
+        // Blobの場合はテキストに変換
+        const text = event.data instanceof Blob ? await event.data.text() : event.data;
+        const data = JSON.parse(text);
         console.log('📱 Received from mobile:', data);
 
-        if (data.type === 'FRET_UPDATE') {
-          fretStatesRef.current = data.payload;
+        // モバイル側のsendDataは { type: "data", payload: ... } でラップする
+        const payload = data.type === 'data' ? data.payload : data;
+        console.log('📦 Payload:', payload);
+
+        if (payload.type === 'chord_change') {
+          // コードが変更された - フレット状態を計算
+          // デフォルトは null（弦が使われない）
+          const fretStates: (number | null)[] = [null, null, null, null, null, null];
+          if (payload.fingering) {
+            payload.fingering.forEach(({ string, fret }) => {
+              const stringIndex = 6 - string; // string: 6(E) -> index: 0, string: 1(E) -> index: 5
+              if (stringIndex >= 0 && stringIndex < 6) {
+                // -1はミュート、0以上はフレット番号
+                fretStates[stringIndex] = fret;
+              }
+            });
+          }
+          fretStatesRef.current = fretStates;
+          currentChordRef.current = payload.chord || 'C';
+          console.log('🎸 Chord changed to:', payload.chord, 'Fret states:', fretStates);
+        } else if (payload.type === 'strings_pressed') {
+          // 弦が押された - ビジュアルフィードバックを表示
+          console.log('🎸 Strings pressed:', payload.strings);
+        } else if (payload.type === 'strings_released') {
+          // 弦が離された
+          console.log('🎸 Strings released');
+        } else if (payload.type === 'FRET_UPDATE') {
+          // 旧形式のメッセージ（互換性のため）
+          // number[]を(number | null)[]に変換
+          const fretPayload = payload.payload as number[];
+          fretStatesRef.current = fretPayload.map(v => v === -1 ? null : v);
         }
       } catch (e) {
         console.error('Failed to parse WebSocket message:', e);
@@ -145,10 +192,12 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
     const spawnNote = () => {
       const now = Date.now();
       if (now - lastNoteSpawnTime.current > 1100) {
+        const chords = ['C', 'G', 'D', 'Em', 'Am', 'F', 'Dm', 'A', 'E'];
+        const randomChord = chords[Math.floor(Math.random() * chords.length)];
         notesRef.current.push({
           id: nextNoteId.current++,
           x: -100,
-          fret: [0, 3, 5, 7, 10, 12][Math.floor(Math.random() * 6)],
+          chordName: randomChord,
           hit: false,
           missed: false
         });
@@ -189,6 +238,19 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
       const ctx = canvasRef.current.getContext('2d', { alpha: false });
       if (!ctx) return;
 
+      // 動的な次元を取得（ウィンドウサイズの変更に対応）
+      const currentDims = dimsRef.current;
+      const CANVAS_W = currentDims.w;
+      const CANVAS_H = currentDims.h;
+      const HIT_ZONE_X = CANVAS_W - 250;
+      const STRUM_ZONE = {
+        x: CANVAS_W - 650,
+        y: CANVAS_H * 0.65,
+        w: 600,
+        h: CANVAS_H * 0.3
+      };
+      const STRUM_MID_Y = STRUM_ZONE.y + (STRUM_ZONE.h / 2);
+
       ctx.fillStyle = '#020617';
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -211,11 +273,17 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
 
       ctx.save();
       const frets = fretStatesRef.current;
+      // デバッグ: fretStatesを常にログに出力
+      console.log('🎸 Current fretStates:', frets, 'String indices (0=E6, 1=A5, 2=D4, 3=G3, 4=B2, 5=E1)');
       for (let i = 0; i < 6; i++) {
         const yOff = i * 30;
-        const active = frets[i] > 0;
-        ctx.strokeStyle = active ? '#fb923c' : 'rgba(255, 255, 255, 0.1)';
-        ctx.lineWidth = active ? 8 : 2;
+        // 1以上のフレットを押さえている弦だけをアクティブ（0は開放弦、-1はミュート、nullは未使用）
+        const active = frets[i] !== null && frets[i] !== -1 && frets[i] !== 0;
+        // より見やすい色と線幅に
+        ctx.strokeStyle = active ? '#fbbf24' : 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = active ? 12 : 2;
+        ctx.shadowBlur = active ? 20 : 0;
+        ctx.shadowColor = '#fbbf24';
         ctx.beginPath();
         ctx.moveTo(0, STRUM_ZONE.y + yOff);
         ctx.lineTo(CANVAS_W, STRUM_ZONE.y + yOff + 140);
@@ -328,7 +396,7 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
           ctx.fillStyle = note.missed ? '#450a0a' : '#f97316';
           ctx.beginPath(); ctx.roundRect(note.x - 55, centerY - 45, 110, 90, 20); ctx.fill();
           ctx.fillStyle = '#fff'; ctx.font = '900 44px sans-serif'; ctx.textAlign = 'center';
-          ctx.fillText(`F${note.fret}`, note.x, centerY + 18);
+          ctx.fillText(note.chordName, note.x, centerY + 18);
           ctx.restore();
         }
       }
@@ -358,7 +426,7 @@ const PCPlayer: React.FC<PCPlayerProps> = ({ roomId, onExit }) => {
       const stream = videoRef.current?.srcObject as MediaStream;
       stream?.getTracks().forEach(t => t.stop());
     };
-  }, [dims]);
+  }, []); // 依存配列を空にして、リソースを一度だけ初期化する
 
   const handleStart = async () => {
     if (audioRef.current) {
